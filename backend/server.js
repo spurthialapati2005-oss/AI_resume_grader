@@ -12,52 +12,71 @@ import { aiRouter } from "./APIs/aiAPI.js";
 const app = exp();
 
 
-// Allowed Frontend Origins
+// Allowed Origins
 const allowedOrigins = [
   process.env.CLIENT_URL,
   "http://localhost:5173",
-  "http://127.0.0.1:5173",
-  "https://your-frontend-domain.vercel.app",
+  "https://ai-resume-grader-seven.vercel.app",
 ].filter(Boolean);
 
 
-// CORS Middleware
-app.use( cors({ origin: (origin, callback) => {
-    if (!origin || origin === "null" || allowedOrigins.includes(origin)) {
+// CORS
+app.use(
+  cors({
+    origin: function (origin, callback) {
+
+      // Allow Postman, mobile apps, server-to-server requests
+      if (!origin) {
         return callback(null, true);
-    }
-    return callback(
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.log("Blocked Origin:", origin);
+
+      return callback(
         new Error(`CORS blocked for origin: ${origin}`)
-    );
-},
-credentials: true,
-}));
+      );
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+    ],
+  })
+);
 
 
-// Built-in Middlewares
+// Middlewares
 app.use(exp.json({ limit: "10mb" }));
 app.use(cookieParser());
 
 
-// Static Uploads Folder
+// Static Uploads
 app.use("/uploads", exp.static("uploads"));
 
 
-// Health Route
+// Health Check
 app.get("/", (req, res) => {
-  res.send("ResumeIQ AI Backend Running");
+  res.status(200).json({
+    success: true,
+    message: "ResumeIQ AI Backend Running",
+  });
 });
 
 
-// API Routes
+// Routes
 app.use("/auth-api", authRouter);
 app.use("/resume-api", resumeRouter);
 app.use("/analysis-api", analysisRouter);
 app.use("/ai-api", aiRouter);
 
 
-// PORT
-const PORT = process.env.PORT;
+// Port
+const PORT = process.env.PORT || 5000;
 
 
 // Database Connection
@@ -65,16 +84,25 @@ const connectDB = async () => {
   try {
     await connect(process.env.MONGO_URL);
 
-    console.log("MongoDB Connection Success");
+    console.log("MongoDB Connected");
 
     app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+      console.log(
+        `Server running on port ${PORT}`
+      );
     });
 
   } catch (err) {
-    console.log("Database Connection Error:", err);
+
+    console.error(
+      "Database Connection Error:",
+      err
+    );
+
+    process.exit(1);
   }
 };
+
 
 // Start Server
 connectDB();
