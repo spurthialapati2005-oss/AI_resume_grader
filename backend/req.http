@@ -1,0 +1,84 @@
+### Health Check
+GET http://localhost:5000/
+
+
+### User Register
+POST http://localhost:5000/auth-api/register
+Content-Type: application/json
+
+{
+  "username":"spurthi",
+  "email":"spurthi@gmail.com",
+  "password":"spurthi@123"
+}
+
+
+### User Login
+POST http://localhost:5000/auth-api/login
+Content-Type: application/json
+
+{
+  "email":"spurthi@gmail.com",
+  "password":"spurthi@123"
+}
+
+
+### Get User Profile
+GET http://localhost:5000/auth-api/profile
+
+
+### User Logout
+GET http://localhost:5000/auth-api/logout
+
+
+### Upload Resume
+POST http://localhost:5000/resume-api/upload
+Content-Type: multipart/form-data; boundary=Boundary123
+
+--Boundary123
+Content-Disposition: form-data; name="resume"; filename="resume.pdf"
+Content-Type: application/pdf
+
+< ./resume.pdf
+--Boundary123--
+
+
+### Analyze Resume
+POST http://localhost:5000/analysis-api/analyze
+Content-Type: application/json
+
+{
+  "resumeUrl":"https://lmfmiqatqzwmhmutjmgb.supabase.co/storage/v1/object/public/resumes/1780155815867-resume.pdf",
+
+  "resumeName":"resume.pdf",
+
+  "jobDescription":"Looking for MERN stack developer with React, Node.js, MongoDB, Express, JWT authentication, REST APIs, Tailwind CSS, and AI integration skills."
+}
+
+
+### AI career Chat
+POST http://localhost:5000/ai-api/career-chat
+Content-Type: application/json
+
+{
+  "prompt":"How can I improve my resume for Google internships?"
+}
+
+
+### Resume Improvement
+POST http://localhost:5000/ai-api/resume-improve
+Content-Type: application/json
+
+{
+  "resumeText":"React.js, Node.js, Express.js, MongoDB, JWT authentication, REST APIs, Tailwind CSS, MERN Stack projects."
+}
+
+
+### Interview Questions
+POST http://localhost:5000/ai-api/interview-questions
+Content-Type: application/json
+
+{
+  "role":"MERN Stack Developer"
+}
+
