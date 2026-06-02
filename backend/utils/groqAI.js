@@ -1,21 +1,43 @@
 import Groq from "groq-sdk";
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
+});
 
 const model = "llama-3.3-70b-versatile";
 
 const parseJsonObject = (value) => {
   const cleaned = String(value || "")
-    .replace(/```json/g, "")
+    .replace(/```json/gi, "")
     .replace(/```/g, "")
     .trim();
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
 
-  return JSON.parse(start >= 0 && end >= 0 ? cleaned.slice(start, end + 1) : cleaned);
+  if (start >= 0 && end >= 0) {
+    return JSON.parse(cleaned.slice(start, end + 1));
+  }
+
+  return JSON.parse(cleaned);
 };
 
-const chatJSON = async ({ system, user, temperature = 0, maxTokens = 700 }) => {
+const uniqueStrings = (items = []) => {
+  const seen = new Set();
+
+  return items
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item) => {
+      const key = item.toLowerCase().replace(/[^a-z0-9+#.]/g, "");
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+const asArray = (value) => (Array.isArray(value) ? value : []);
+
+const chatJSON = async ({ system, user, temperature = 0, maxTokens = 900 }) => {
   const response = await groq.chat.completions.create({
     model,
     messages: [
@@ -29,241 +51,204 @@ const chatJSON = async ({ system, user, temperature = 0, maxTokens = 700 }) => {
   return parseJsonObject(response.choices[0].message.content);
 };
 
-const isMissingJobDescription = (jobDescription = "") => {
+const hasJobDescription = (jobDescription = "") => {
   const normalized = String(jobDescription).trim();
 
   return (
-    !normalized ||
-    /^general ats resume review/i.test(normalized) ||
-    /^no job description provided/i.test(normalized)
+    normalized &&
+    !/^general ats resume review/i.test(normalized) &&
+    !/^no job description provided/i.test(normalized)
   );
 };
 
-const normalizeSkill = (skill = "") =>
-  String(skill)
-    .toLowerCase()
-    .replace(/[^a-z0-9+#.]/g, "");
-
-const uniqueStrings = (items = []) => {
-  const seen = new Set();
-
-  return items
-    .map((item) => String(item || "").trim())
-    .filter(Boolean)
-    .filter((item) => {
-      const key = normalizeSkill(item);
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-};
-
-const skillMatches = (requiredSkill, resumeSkills = []) => {
-  const required = normalizeSkill(requiredSkill);
-  if (!required) return false;
-
-  return resumeSkills.some((resumeSkill) => {
-    const resume = normalizeSkill(resumeSkill);
-    if (!resume) return false;
-    if (resume === required) return true;
-    if (required.length >= 5 && resume.includes(required)) return true;
-    if (resume.length >= 5 && required.includes(resume)) return true;
-    return false;
-  });
-};
-
-const compareSkills = (requiredSkills = [], resumeSkills = []) => {
-  const required = uniqueStrings(requiredSkills);
-  const matchedSkills = required.filter((skill) => skillMatches(skill, resumeSkills));
-  const missingSkills = required.filter((skill) => !skillMatches(skill, resumeSkills));
-
-  return {
-    matchedSkills,
-    missingSkills,
-  };
-};
-
-const calculateAtsScore = ({ requiredSkills, matchedSkills, resumeText }) => {
-  const totalRequired = Math.max(requiredSkills.length, 1);
-  const skillRatio = matchedSkills.length / totalRequired;
-  const skillScore = Math.round(skillRatio * 75);
-  const hasMetrics = /\b\d+%|\b\d+\+|\b\d+\s*(?:users|clients|patients|projects|staff|meals|menus|cases|reports|students|sales|revenue|hours)\b/i.test(resumeText);
-  const hasCertifications = /certification|certified|certificate|license|training|credential/i.test(resumeText);
-  const hasLinks = /linkedin|github|portfolio|https?:\/\//i.test(resumeText);
-  const hasEducation = /education|university|college|bachelor|master|degree|diploma|school/i.test(resumeText);
-  const hasSummary = /summary|profile|objective|professional summary/i.test(resumeText);
-  const bonus =
-    (hasMetrics ? 8 : 0) +
-    (hasCertifications ? 6 : 0) +
-    (hasLinks ? 4 : 0) +
-    (hasEducation ? 4 : 0) +
-    (hasSummary ? 3 : 0);
-
-  return Math.max(25, Math.min(100, skillScore + bonus));
-};
-
-const detectResumeProfile = (resumeText) =>
+const extractFacts = async (resumeText) =>
   chatJSON({
-    system: `Analyze this resume and identify the candidate profile.
-Return ONLY JSON.
+    system: `You are an expert resume parser.
 
-{
-  "role": "",
-  "industry": "",
-  "experienceLevel": ""
-}`,
-    user: `Resume:\n${resumeText}`,
-    maxTokens: 180,
-  });
-
-const extractResumeSkills = async (resumeText) => {
-  const parsed = await chatJSON({
-    system: `Extract all professional skills from this resume.
-Include technical skills, non-technical role skills, tools, certifications, methods, and domain competencies.
-Do not invent skills.
-Return ONLY JSON.
-
-{
-  "skills": []
-}`,
-    user: `Resume:\n${resumeText}`,
-    maxTokens: 650,
-  });
-
-  return uniqueStrings(parsed.skills).slice(0, 50);
-};
-
-const extractJobRequirements = async (jobDescription) =>
-  chatJSON({
-    system: `Analyze this job description and extract role requirements.
-Return ONLY JSON.
-
-{
-  "role": "",
-  "industry": "",
-  "requiredSkills": [],
-  "preferredSkills": []
-}`,
-    user: `Job Description:\n${jobDescription}`,
-    maxTokens: 650,
-  });
-
-const generateRoleBenchmark = async (profile) => {
-  const parsed = await chatJSON({
-    system: `Generate the top 15 professional skills expected for this profession.
-Never include programming, software, or web-development skills unless the profession is actually technical.
-Return ONLY JSON.
-
-{
-  "skills": []
-}`,
-    user: `Role: ${profile.role || "Unknown"}\nIndustry: ${profile.industry || "Unknown"}\nExperience Level: ${profile.experienceLevel || "Unknown"}`,
-    temperature: 0.1,
-    maxTokens: 450,
-  });
-
-  return uniqueStrings(parsed.skills).slice(0, 15);
-};
-
-const generateFeedback = async ({
-  resumeText,
-  jobDescription,
-  profile,
-  resumeSkills,
-  requiredSkills,
-  matchedSkills,
-  missingSkills,
-  atsScore,
-}) =>
-  chatJSON({
-    system: `You are ResumeIQ AI: an expert ATS scanner, recruiter, hiring manager, and career coach.
-
-Write concise, specific resume analysis for any tech or non-tech profession.
+Analyze the resume and extract facts ONLY.
+Detect the candidate's profession and industry automatically.
 
 Rules:
-- Use ONLY the resume, job description, detected profile, and skill comparison provided.
-- Never invent skills, projects, certifications, employers, or experience.
-- Never recommend software/programming skills unless they are required for the detected role or JD.
-- Strengths must reference actual resume content.
-- Weaknesses must identify real gaps.
-- Suggestions must be actionable and personalized.
-- Return ONLY JSON.
+- Extract only information found in the resume.
+- Do not invent missing details.
+- Keep unknown fields as an empty string or empty array.
+- Separate skills, tools, technologies, certifications, education, projects, achievements, and soft skills.
+- Return valid JSON only. No markdown. No explanation.
 
+JSON shape:
 {
-  "summary": "",
+  "candidateName": "",
+  "currentRole": "",
+  "targetRole": "",
+  "industry": "",
+  "yearsExperience": "",
+  "skills": [],
+  "tools": [],
+  "technologies": [],
+  "certifications": [],
+  "education": [],
+  "projects": [],
+  "achievements": [],
+  "softSkills": []
+}`,
+    user: `Resume text:
+${resumeText}`,
+    temperature: 0,
+    maxTokens: 1200,
+  });
+
+const generateIndustryBenchmark = async ({ facts, jobDescription }) =>
+  chatJSON({
+    system: `You are an industry hiring expert and ATS keyword strategist.
+
+Given the detected profession and industry, generate the skills recruiters normally expect.
+If a job description is provided, also extract the required skills from that job description.
+
+Rules:
+- Do not use a generic software-engineering benchmark unless the detected profession is software/IT.
+- For non-tech roles, use non-tech/domain skills.
+- Required skills must be relevant to the detected profession and industry.
+- Job-description skills must come from the job description only.
+- Return valid JSON only. No markdown. No explanation.
+
+JSON shape:
+{
+  "profession": "",
+  "industry": "",
+  "requiredSkills": [],
+  "jobDescriptionSkills": []
+}`,
+    user: `Detected resume facts:
+${JSON.stringify(facts, null, 2)}
+
+Job description:
+${hasJobDescription(jobDescription) ? jobDescription : "No job description provided."}`,
+    temperature: 0.15,
+    maxTokens: 900,
+  });
+
+const evaluateAts = async ({
+  facts,
+  benchmark,
+  jobDescription,
+  resumeText,
+}) =>
+  chatJSON({
+    system: `You are a strict but fair ATS resume scoring system.
+
+Evaluate the resume using this pipeline:
+Resume facts -> detected profession -> industry benchmark -> job description match if present -> ATS score -> feedback.
+
+Return ONLY valid JSON.
+
+Required JSON shape:
+{
+  "atsScore": 0,
+  "matchedSkills": [],
+  "missingSkills": [],
   "strengths": [],
   "weaknesses": [],
-  "suggestions": []
-}`,
-    user: `Detected Profile:
-Role: ${profile.role || "Unknown"}
-Industry: ${profile.industry || "Unknown"}
-Experience Level: ${profile.experienceLevel || "Unknown"}
+  "suggestions": [],
+  "summary": ""
+}
 
-ATS Score calculated by backend: ${atsScore}/100
+Rules:
+1. ATS score must be based on actual resume content.
+2. Missing skills must come only from the provided benchmark skills or job-description skills.
+3. Never mention skills unrelated to the detected profession.
+4. Do not invent technologies, certifications, projects, employers, tools, or achievements.
+5. Give realistic recruiter-style feedback.
+6. If a job description exists, prioritize job-description skills over general benchmark skills.
+7. If no job description exists, evaluate against the industry benchmark.
+8. Strengths must reference facts actually present in the resume.
+9. Weaknesses must explain what is weak or missing without exaggerating.
+10. Suggestions must be practical edits the candidate can make truthfully.
+11. Do not include recruiterSummary.
 
-Resume Skills:
-${resumeSkills.map((skill) => `- ${skill}`).join("\n") || "- None clearly extracted"}
+Scoring guide:
+- 90-100 = Excellent: highly aligned, strong evidence, strong keywords, measurable impact.
+- 80-89 = Strong: good alignment with a few missing keywords or evidence gaps.
+- 70-79 = Good: relevant background but several improvements needed.
+- 60-69 = Average: partial alignment, weak keyword/evidence coverage.
+- Below 60 = Needs Improvement: major gaps against role expectations.
 
-Required/Benchmark Skills:
-${requiredSkills.map((skill) => `- ${skill}`).join("\n") || "- None clearly extracted"}
+Scoring dimensions:
+- Skills and keyword alignment.
+- Experience relevance.
+- Projects or work evidence.
+- Certifications or education relevance.
+- Measurable achievements.
+- ATS-friendly clarity and completeness.`,
+    user: `Extracted resume facts:
+${JSON.stringify(facts, null, 2)}
 
-Matched Skills:
-${matchedSkills.map((skill) => `- ${skill}`).join("\n") || "- None"}
+Industry benchmark:
+${JSON.stringify(benchmark, null, 2)}
 
-Missing Skills:
-${missingSkills.map((skill) => `- ${skill}`).join("\n") || "- None"}
+Job description:
+${hasJobDescription(jobDescription) ? jobDescription : "No job description provided."}
 
-Resume:
-${resumeText}
-
-${jobDescription ? `Job Description:\n${jobDescription}` : "No job description was provided. Use the benchmark skills only."}`,
-    temperature: 0.25,
-    maxTokens: 1100,
+Full resume text for evidence checking:
+${resumeText}`,
+    temperature: 0.2,
+    maxTokens: 1300,
   });
 
 export const analyzeResumeAI = async (resumeText, jobDescription = "") => {
-  const missingJobDescription = isMissingJobDescription(jobDescription);
-  const profile = await detectResumeProfile(resumeText);
-  const resumeSkills = await extractResumeSkills(resumeText);
-  const jobRequirements = missingJobDescription
-    ? null
-    : await extractJobRequirements(jobDescription);
-  const requiredSkills = missingJobDescription
-    ? await generateRoleBenchmark(profile)
-    : uniqueStrings([
-        ...(jobRequirements?.requiredSkills || []),
-        ...(jobRequirements?.preferredSkills || []),
-      ]).slice(0, 20);
-  const { matchedSkills, missingSkills } = compareSkills(requiredSkills, resumeSkills);
-  const atsScore = calculateAtsScore({
-    requiredSkills,
-    matchedSkills,
-    resumeText,
+  const facts = await extractFacts(resumeText);
+  const benchmark = await generateIndustryBenchmark({
+    facts,
+    jobDescription,
   });
-  const feedback = await generateFeedback({
+  const evaluation = await evaluateAts({
+    facts,
+    benchmark,
+    jobDescription,
     resumeText,
-    jobDescription: missingJobDescription ? "" : jobDescription,
-    profile,
-    resumeSkills,
-    requiredSkills,
-    matchedSkills,
-    missingSkills,
-    atsScore,
   });
 
+  const resumeSkills = uniqueStrings([
+    ...asArray(facts.skills),
+    ...asArray(facts.tools),
+    ...asArray(facts.technologies),
+    ...asArray(facts.softSkills),
+  ]).slice(0, 60);
+
+  const requiredSkills = uniqueStrings([
+    ...asArray(benchmark.jobDescriptionSkills),
+    ...asArray(benchmark.requiredSkills),
+  ]).slice(0, 30);
+
+  const missingSkills = uniqueStrings(evaluation.missingSkills)
+    .filter((skill) =>
+      requiredSkills.some(
+        (requiredSkill) =>
+          requiredSkill.toLowerCase() === skill.toLowerCase() ||
+          requiredSkill.toLowerCase().includes(skill.toLowerCase()) ||
+          skill.toLowerCase().includes(requiredSkill.toLowerCase()),
+      ),
+    )
+    .slice(0, 10);
+
   return JSON.stringify({
-    atsScore,
-    detectedRole: profile.role || jobRequirements?.role || "",
-    detectedIndustry: profile.industry || jobRequirements?.industry || "",
-    experienceLevel: profile.experienceLevel || "",
+    atsScore: Math.max(0, Math.min(100, Number(evaluation.atsScore) || 0)),
+    detectedRole:
+      facts.targetRole ||
+      facts.currentRole ||
+      benchmark.profession ||
+      "",
+    detectedIndustry:
+      facts.industry ||
+      benchmark.industry ||
+      "",
+    experienceLevel: facts.yearsExperience || "",
     extractedSkills: resumeSkills,
     requiredSkills,
-    matchedSkills,
+    matchedSkills: uniqueStrings(evaluation.matchedSkills).slice(0, 15),
     missingSkills,
-    summary: feedback.summary || "",
-    strengths: Array.isArray(feedback.strengths) ? feedback.strengths.slice(0, 6) : [],
-    weaknesses: Array.isArray(feedback.weaknesses) ? feedback.weaknesses.slice(0, 6) : [],
-    suggestions: Array.isArray(feedback.suggestions) ? feedback.suggestions.slice(0, 6) : [],
+    summary: evaluation.summary || "",
+    strengths: uniqueStrings(evaluation.strengths).slice(0, 6),
+    weaknesses: uniqueStrings(evaluation.weaknesses).slice(0, 6),
+    suggestions: uniqueStrings(evaluation.suggestions).slice(0, 6),
   });
 };
