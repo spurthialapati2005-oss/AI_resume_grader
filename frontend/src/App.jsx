@@ -1,6 +1,7 @@
-import { useEffect } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import React, { useEffect } from "react";
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useNavigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
+import axios from "axios";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
 import UploadResume from "./components/UploadResume";
@@ -15,8 +16,29 @@ import ProfilePage from "./components/ProfilePage";
 import ChatWindow from "./components/ChatWindow";
 import { useAppStore } from "./store/useAppStore";
 
-function ProtectedRoute({ children }) {
-  const location = useLocation();
+axios.defaults.withCredentials = true;
+
+const AppLayout = () => {
+  const { loading, chatOpen, user } = useAppStore();
+
+  return (
+    <div className="min-h-screen overflow-hidden text-gray-950">
+      <Navbar />
+      <div className={`transition-[padding] duration-300 ${user && chatOpen ? "xl:pr-[28rem]" : ""}`}>
+        <Outlet />
+        <Footer />
+      </div>
+      {user && chatOpen && (
+        <aside className="fixed inset-x-3 bottom-3 z-30 xl:inset-y-20 xl:left-auto xl:right-4 xl:w-[26.5rem]">
+          <ChatWindow popup />
+        </aside>
+      )}
+      {(loading.upload || loading.analyze) && <LoadingSpinner />}
+    </div>
+  );
+};
+
+const ProtectedRoutes = () => {
   const { user, authReady, loading } = useAppStore();
 
   if (!authReady || loading.auth) {
@@ -24,23 +46,23 @@ function ProtectedRoute({ children }) {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    return <Navigate to="/login" replace />;
   }
 
-  return children;
-}
+  return <AppLayout />;
+};
 
-function RootRoute() {
-  const { user, authReady } = useAppStore();
+const AuthRoutes = () => {
+  const { user, authReady, loading } = useAppStore();
 
-  if (!authReady) {
+  if (!authReady || loading.auth) {
     return <LoadingSpinner />;
   }
 
-  return <Navigate to={user ? "/home" : "/login"} replace />;
-}
+  return user ? <Navigate to="/home" replace /> : <Outlet />;
+};
 
-function Home() {
+const Home = () => {
   const navigate = useNavigate();
 
   return (
@@ -48,9 +70,9 @@ function Home() {
       <Hero onStart={() => navigate("/analyze")} />
     </main>
   );
-}
+};
 
-function Analyze() {
+const Analyze = () => {
   const { analysis, loading } = useAppStore();
 
   return (
@@ -72,10 +94,10 @@ function Analyze() {
       </section>
     </main>
   );
-}
+};
 
-function App() {
-  const { loading, fetchProfile, authReady, chatOpen, user } = useAppStore();
+export default function App() {
+  const { fetchProfile, authReady } = useAppStore();
 
   useEffect(() => {
     if (!authReady) {
@@ -84,27 +106,7 @@ function App() {
   }, [authReady, fetchProfile]);
 
   return (
-    <div className="min-h-screen overflow-hidden text-gray-950">
-      <Navbar />
-      <div className={`transition-[padding] duration-300 ${user && chatOpen ? "xl:pr-[28rem]" : ""}`}>
-        <Routes>
-          <Route path="/" element={<RootRoute />} />
-          <Route path="/login" element={<AuthPage mode="login" />} />
-          <Route path="/register" element={<AuthPage mode="register" />} />
-          <Route path="/home" element={<ProtectedRoute><Home /></ProtectedRoute>} />
-          <Route path="/analyze" element={<ProtectedRoute><Analyze /></ProtectedRoute>} />
-          <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
-          <Route path="/dashboard" element={<Navigate to="/analyze" replace />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-        <Footer />
-      </div>
-      {user && chatOpen && (
-        <aside className="fixed inset-x-3 bottom-3 z-30 xl:inset-y-20 xl:left-auto xl:right-4 xl:w-[26.5rem]">
-          <ChatWindow popup />
-        </aside>
-      )}
-      {(loading.upload || loading.analyze) && <LoadingSpinner />}
+    <BrowserRouter>
       <Toaster
         position="top-center"
         toastOptions={{
@@ -117,8 +119,23 @@ function App() {
           success: { iconTheme: { primary: "#111827", secondary: "#ffffff" } },
         }}
       />
-    </div>
+
+      <Routes>
+        <Route element={<AuthRoutes />}>
+          <Route path="/login" element={<AuthPage mode="login" />} />
+          <Route path="/register" element={<AuthPage mode="register" />} />
+        </Route>
+
+        <Route element={<ProtectedRoutes />}>
+          <Route path="/" element={<Navigate to="/home" replace />} />
+          <Route path="/home" element={<Home />} />
+          <Route path="/analyze" element={<Analyze />} />
+          <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/dashboard" element={<Navigate to="/analyze" replace />} />
+        </Route>
+
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
-
-export default App;
